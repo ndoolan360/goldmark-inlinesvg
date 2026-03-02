@@ -11,10 +11,10 @@ go get go.doolan.dev/goldmark/inlinesvg
 ## Behavior
 
 - **Local SVGs** are inlined as `<svg>...</svg>` in the output.
+  - The `alt` attribute is omitted from inlined SVGs, but the title attribute is preserved if provided.
 - **Non‑SVG images** are rendered as `<img>` (including PNG, JPEG, etc).
 - **Remote images** (`http://`, `https://`) are **not** inlined.
 - **Data URLs** are left as `<img>` sources.
-- **Alt text** is derived from plain text only; inline formatting is ignored.
 
 ## Options
 
@@ -23,6 +23,12 @@ go get go.doolan.dev/goldmark/inlinesvg
 Sets the base directory used to resolve relative image paths.
 
 ## Usage
+
+```xml
+<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M10 10 H 90 V 90 H 10 Z"/>
+</svg>
+```
 
 ```go
 package main
@@ -46,6 +52,11 @@ func main() {
 	_ = md.Convert([]byte(`![alt text](./logo.svg "title")`), &buf)
 
 	fmt.Println(buf.String())
+	
+	// Output:
+  // <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg" title="title">
+  //  <path d="M10 10 H 90 V 90 H 10 Z"/>
+  // </svg>
 }
 ```
 

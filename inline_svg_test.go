@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
 )
@@ -18,6 +19,7 @@ const (
 	svgTitle            = "svg title"
 	svgContentWithTitle = `<svg title="svg title" xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="green"/></svg>`
 	svgFileName         = "test.svg"
+	absoluteSvgFileName = "/test.svg"
 	pngContent          = "dummy png content"
 	pngFileName         = "test.png"
 	nonImageContent     = "dummy non-image content"
@@ -40,6 +42,7 @@ func TestGetImage(t *testing.T) {
 	prepareTestFile(t, dir, svgFileName, svgContent)
 	prepareTestFile(t, dir, pngFileName, pngContent)
 	prepareTestFile(t, dir, nonImageFileName, nonImageContent)
+	prepareTestFile(t, dir, absoluteSvgFileName, svgContent)
 
 	tests := []struct {
 		name        string
@@ -99,6 +102,7 @@ func TestIntegration(t *testing.T) {
 	dir := t.TempDir()
 
 	prepareTestFile(t, dir, svgFileName, svgContent)
+	prepareTestFile(t, dir, absoluteSvgFileName, svgContent)
 	prepareTestFile(t, dir, pngFileName, pngContent)
 	prepareTestFile(t, dir, nonImageFileName, nonImageContent)
 
@@ -106,6 +110,7 @@ func TestIntegration(t *testing.T) {
 		name          string
 		source        string
 		extOptions    []Option
+		parserOptions []parser.Option
 		renderOptions []renderer.Option
 		want          string
 	}{
@@ -116,9 +121,21 @@ func TestIntegration(t *testing.T) {
 			want:       fmt.Sprintf("<p>%s</p>", svgContentWithTitle),
 		},
 		{
-			name:   "render local png as img tag absolute path",
+			name:       "inline local svg absolute path with ParentPath",
+			source:     fmt.Sprintf(`![alt text](%s "%s")`, absoluteSvgFileName, svgTitle),
+			extOptions: []Option{WithParentPath(dir)},
+			want:       fmt.Sprintf(`<p><img src="%s" alt="alt text" title="%s"></p>`, absoluteSvgFileName, svgTitle),
+		},
+		{
+			name:   "render local png as img tag with relative path",
 			source: fmt.Sprintf(`![alt text](%s "png title")`, pngFileName),
 			want:   fmt.Sprintf(`<p><img src="%s" alt="alt text" title="png title"></p>`, pngFileName),
+		},
+		{
+			name:          "render local png as img tag with XHTML option",
+			source:        fmt.Sprintf(`![alt text](%s "png title")`, pngFileName),
+			renderOptions: []renderer.Option{html.WithXHTML()},
+			want:          fmt.Sprintf(`<p><img src="%s" alt="alt text" title="png title" /></p>`, pngFileName),
 		},
 		{
 			name:   "render local non-image as img tag",
@@ -139,14 +156,10 @@ func TestIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var allRenderOptions []renderer.Option
-			if tt.renderOptions != nil {
-				allRenderOptions = append(allRenderOptions, tt.renderOptions...)
-			}
-
 			md := goldmark.New(
 				goldmark.WithExtensions(New(tt.extOptions...)),
-				goldmark.WithRendererOptions(allRenderOptions...),
+				goldmark.WithParserOptions(tt.parserOptions...),
+				goldmark.WithRendererOptions(tt.renderOptions...),
 			)
 			var buf bytes.Buffer
 			if err := md.Convert([]byte(tt.source), &buf); err != nil {

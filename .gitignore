@@ -1,0 +1,16 @@
+# Logs
+logs
+*.log
+*-debug.log*
+*.timestamp-*
+
+# Editor directories and files
+*.env*
+!.env.example
+.DS_Store
+
+# Go files
+go.work
+go.work.sum
+*.test
+*.out
