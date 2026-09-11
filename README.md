@@ -14,7 +14,7 @@ go get go.doolan.dev/goldmark/inlinesvg
   - The `alt` attribute is omitted from inlined SVGs, but the title attribute is preserved if provided.
 - **Non‑SVG images** are rendered as `<img>` (including PNG, JPEG, etc).
 - **Remote images** (`http://`, `https://`) are **not** inlined.
-- **Data URLs** are left as `<img>` sources.
+- **Safe raster data URLs** (PNG, GIF, JPEG, and WebP) are left as `<img>` sources.
 
 ## Options
 
@@ -63,7 +63,8 @@ func main() {
 ## Security
 
 The extension respects Goldmark’s safety behavior:
-- Dangerous URLs (e.g. `javascript:`) are **stripped** unless you enable `html.WithUnsafe()` on the renderer.
+- Dangerous URLs (for example, `javascript:` and SVG data URLs) are **stripped** unless you enable `html.WithUnsafe()` on the renderer.
+- URL safety is checked after entity resolution and URL escaping so encoded dangerous schemes are also stripped.
 
 ## License
 

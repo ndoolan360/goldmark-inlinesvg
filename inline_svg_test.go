@@ -152,6 +152,17 @@ func TestIntegration(t *testing.T) {
 			source: `![alt text](data:image/png;base64,something= "data png title")`,
 			want:   `<p><img src="data:image/png;base64,something=" alt="alt text" title="data png title"></p>`,
 		},
+		{
+			name:          "render data url svg in unsafe mode",
+			source:        `![alt text](data:image/svg+xml;base64,PHN2Zy8+ "data svg title")`,
+			renderOptions: []renderer.Option{html.WithUnsafe()},
+			want:          `<p><img src="data:image/svg+xml;base64,PHN2Zy8+" alt="alt text" title="data svg title"></p>`,
+		},
+		{
+			name:   "strip encoded dangerous url in safe mode",
+			source: `![alt text](&#106;avascript:alert%281%29 "unsafe title")`,
+			want:   `<p><img src="" alt="alt text" title="unsafe title"></p>`,
+		},
 	}
 
 	for _, tt := range tests {

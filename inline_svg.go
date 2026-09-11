@@ -97,13 +97,13 @@ func (r *inlineSvgRenderer) getImage(src []byte) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("fail to read %s: %w", s, err)
 	}
-	mtype := mimetype.Detect(b).String()
+	mtype := mimetype.Detect(b)
 
-	if mtype != "image/svg+xml" {
-		return src, mtype, nil
+	if !mtype.Is("image/svg+xml") {
+		return src, mtype.String(), nil
 	}
 
-	return b, mtype, nil
+	return b, "image/svg+xml", nil
 }
 
 // renderImage adds svg embedding function to github.com/yuin/goldmark/renderer/html (MIT).
@@ -122,7 +122,7 @@ func (r *inlineSvgRenderer) renderImage(w util.BufWriter, source []byte, node as
 		_, _ = w.Write(split[1])
 	} else {
 		_, _ = w.WriteString(`<img`)
-		r.writeSource(w, n, src, err)
+		r.writeSource(w, n)
 		r.applyAttributes(w, n, source, false)
 		if r.XHTML {
 			_, _ = w.WriteString(" />")
@@ -135,14 +135,11 @@ func (r *inlineSvgRenderer) renderImage(w util.BufWriter, source []byte, node as
 }
 
 // writeSource writes the src attribute of the image element
-func (r *inlineSvgRenderer) writeSource(w util.BufWriter, n *ast.Image, src []byte, fileErr error) {
+func (r *inlineSvgRenderer) writeSource(w util.BufWriter, n *ast.Image) {
 	_, _ = w.WriteString(` src="`)
-	if r.Unsafe || !html.IsDangerousURL(n.Destination) {
-		if fileErr != nil || src == nil {
-			_, _ = w.Write(util.EscapeHTML(util.URLEscape(n.Destination, true)))
-		} else {
-			_, _ = w.Write(src)
-		}
+	src := util.URLEscape(n.Destination, true)
+	if r.Unsafe || !html.IsDangerousURL(src) {
+		_, _ = w.Write(util.EscapeHTML(src))
 	}
 	_, _ = w.WriteString(`"`)
 }
