@@ -15,6 +15,7 @@ go get go.doolan.dev/goldmark/inlinesvg
 - **Non‑SVG images** are rendered as `<img>` (including PNG, JPEG, etc).
 - **Remote images** (`http://`, `https://`) are **not** inlined.
 - **Safe raster data URLs** (PNG, GIF, JPEG, and WebP) are left as `<img>` sources.
+- **SVG data URLs** are stripped in safe mode because they can execute active content. Enable `html.WithUnsafe()` only if you trust the Markdown input.
 
 ## Options
 

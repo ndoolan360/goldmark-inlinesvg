@@ -153,6 +153,11 @@ func TestIntegration(t *testing.T) {
 			want:   `<p><img src="data:image/png;base64,something=" alt="alt text" title="data png title"></p>`,
 		},
 		{
+			name:   "strip data url svg in safe mode",
+			source: `![alt text](data:image/svg+xml;base64,PHN2Zy8+ "data svg title")`,
+			want:   `<p><img src="" alt="alt text" title="data svg title"></p>`,
+		},
+		{
 			name:          "render data url svg in unsafe mode",
 			source:        `![alt text](data:image/svg+xml;base64,PHN2Zy8+ "data svg title")`,
 			renderOptions: []renderer.Option{html.WithUnsafe()},
