@@ -8,10 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/renderer"
-	"github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 )
 
 const (
@@ -77,14 +75,13 @@ func TestGetImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var opts []rendererOption
-			if tt.parentPath != "" {
-				opts = append(opts, WithParentPath(tt.parentPath).(rendererOption))
-			}
-			r := NewInlineSvgRenderer(opts...).(*inlineSvgRenderer)
+			r := &inlineSVGRenderer{parentPath: tt.parentPath}
 
 			gotContent, gotMtype, err := r.getImage([]byte(tt.source))
 
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("getImage() error = %v, wantErr %v", err, tt.wantErr)
+			}
 			if err != nil {
 				return
 			}
@@ -109,21 +106,21 @@ func TestIntegration(t *testing.T) {
 	tests := []struct {
 		name          string
 		source        string
-		extOptions    []Option
+		extOptions    []HTMLRendererOption
 		parserOptions []parser.Option
-		renderOptions []renderer.Option
+		renderOptions []html.Option
 		want          string
 	}{
 		{
 			name:       "inline local svg relative path with ParentPath",
 			source:     fmt.Sprintf(`![alt text](%s "%s")`, svgFileName, svgTitle),
-			extOptions: []Option{WithParentPath(dir)},
+			extOptions: []HTMLRendererOption{WithParentPath(dir)},
 			want:       fmt.Sprintf("<p>%s</p>", svgContentWithTitle),
 		},
 		{
 			name:       "inline local svg absolute path with ParentPath",
 			source:     fmt.Sprintf(`![alt text](%s "%s")`, absoluteSvgFileName, svgTitle),
-			extOptions: []Option{WithParentPath(dir)},
+			extOptions: []HTMLRendererOption{WithParentPath(dir)},
 			want:       fmt.Sprintf(`<p><img src="%s" alt="alt text" title="%s"></p>`, absoluteSvgFileName, svgTitle),
 		},
 		{
@@ -134,7 +131,7 @@ func TestIntegration(t *testing.T) {
 		{
 			name:          "render local png as img tag with XHTML option",
 			source:        fmt.Sprintf(`![alt text](%s "png title")`, pngFileName),
-			renderOptions: []renderer.Option{html.WithXHTML()},
+			renderOptions: []html.Option{html.WithXHTML()},
 			want:          fmt.Sprintf(`<p><img src="%s" alt="alt text" title="png title" /></p>`, pngFileName),
 		},
 		{
@@ -160,7 +157,7 @@ func TestIntegration(t *testing.T) {
 		{
 			name:          "render data url svg in unsafe mode",
 			source:        `![alt text](data:image/svg+xml;base64,PHN2Zy8+ "data svg title")`,
-			renderOptions: []renderer.Option{html.WithUnsafe()},
+			renderOptions: []html.Option{html.WithUnsafe()},
 			want:          `<p><img src="data:image/svg+xml;base64,PHN2Zy8+" alt="alt text" title="data svg title"></p>`,
 		},
 		{
@@ -172,13 +169,16 @@ func TestIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			md := goldmark.New(
-				goldmark.WithExtensions(New(tt.extOptions...)),
-				goldmark.WithParserOptions(tt.parserOptions...),
-				goldmark.WithRendererOptions(tt.renderOptions...),
-			)
+			source := []byte(tt.source)
+			doc := parser.New(tt.parserOptions...).Parse(source)
+			renderOptions := []html.Option{
+				html.WithExtensions(NewHTMLRenderer(tt.extOptions...)),
+			}
+			renderOptions = append(renderOptions, tt.renderOptions...)
+			r := html.New(renderOptions...)
+
 			var buf bytes.Buffer
-			if err := md.Convert([]byte(tt.source), &buf); err != nil {
+			if err := r.Render(&buf, source, doc); err != nil {
 				t.Fatal(err)
 			}
 			if got := strings.TrimSpace(buf.String()); got != strings.TrimSpace(tt.want) {
@@ -192,11 +192,13 @@ func TestIntegration(t *testing.T) {
 
 		// Test safe rendering (default)
 		safeWant := `<p><img src="" alt="alt text" title="unsafe title"></p>`
-		mdSafe := goldmark.New(
-			goldmark.WithExtensions(New(WithParentPath(dir))),
+		source := []byte(jsSource)
+		doc := parser.New().Parse(source)
+		rSafe := html.New(
+			html.WithExtensions(NewHTMLRenderer(WithParentPath(dir))),
 		)
 		var bufSafe bytes.Buffer
-		if err := mdSafe.Convert([]byte(jsSource), &bufSafe); err != nil {
+		if err := rSafe.Render(&bufSafe, source, doc); err != nil {
 			t.Fatal(err)
 		}
 		if got := strings.TrimSpace(bufSafe.String()); got != strings.TrimSpace(safeWant) {
@@ -205,14 +207,12 @@ func TestIntegration(t *testing.T) {
 
 		// Test unsafe rendering
 		unsafeWant := `<p><img src="javascript:alert('XSS')" alt="alt text" title="unsafe title"></p>`
-		mdUnsafe := goldmark.New(
-			goldmark.WithExtensions(New(WithParentPath(dir))),
-			goldmark.WithRendererOptions(
-				html.WithUnsafe(),
-			),
+		rUnsafe := html.New(
+			html.WithExtensions(NewHTMLRenderer(WithParentPath(dir))),
+			html.WithUnsafe(),
 		)
 		var bufUnsafe bytes.Buffer
-		if err := mdUnsafe.Convert([]byte(jsSource), &bufUnsafe); err != nil {
+		if err := rUnsafe.Render(&bufUnsafe, source, doc); err != nil {
 			t.Fatal(err)
 		}
 		if got := strings.TrimSpace(bufUnsafe.String()); got != strings.TrimSpace(unsafeWant) {

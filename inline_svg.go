@@ -9,82 +9,43 @@ import (
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/renderer"
-	"github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/renderer"
+	"github.com/yuin/goldmark/v2/renderer/html"
+	"github.com/yuin/goldmark/v2/util"
 )
 
-// This extension simply inlines SVG images, and leaves other images as is.
+// HTMLRendererOption configures the inline SVG HTML renderer.
+type HTMLRendererOption func(*htmlRendererConfig)
 
-// Option interface sets options for this extension.
-type Option interface {
-	inlineSvgOption()
+type htmlRendererConfig struct {
+	parentPath string
 }
 
-// InlineSvgConfig embeds html.Config to refer to some fields like unsafe and xhtml.
-type InlineSvgConfig struct {
-	html.Config
-	ParentPath string
-}
-
-// SetOption implements renderer.NodeRenderer.SetOption
-func (c *InlineSvgConfig) SetOption(name renderer.OptionName, value any) {
-	c.Config.SetOption(name, value)
-}
-
-type rendererOption interface {
-	Option
-	SetInlineSvgOption(*InlineSvgConfig)
-}
-
-func WithParentPath(path string) Option {
-	return &withParentPath{path}
-}
-
-type withParentPath struct {
-	path string
-}
-
-func (o *withParentPath) inlineSvgOption() {}
-
-func (o *withParentPath) SetInlineSvgOption(c *InlineSvgConfig) {
-	c.ParentPath = o.path
-}
-
-type inlineSvgRenderer struct {
-	InlineSvgConfig
-}
-
-func NewInlineSvgRenderer(opts ...rendererOption) renderer.NodeRenderer {
-	r := &inlineSvgRenderer{
-		InlineSvgConfig: InlineSvgConfig{
-			Config: html.NewConfig(),
-		},
+// WithParentPath sets the base directory used to resolve relative image paths.
+func WithParentPath(path string) HTMLRendererOption {
+	return func(c *htmlRendererConfig) {
+		c.parentPath = path
 	}
-	for _, o := range opts {
-		o.SetInlineSvgOption(&r.InlineSvgConfig)
-	}
-	return r
 }
 
-func (r *inlineSvgRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
-	reg.Register(ast.KindImage, r.renderImage)
+type inlineSVGRenderer struct {
+	config     *html.Config
+	parentPath string
 }
 
-func (r *inlineSvgRenderer) getImage(src []byte) ([]byte, string, error) {
+func (r *inlineSVGRenderer) getImage(src []byte) ([]byte, string, error) {
 	s := string(src)
-	// do not encode online image
+	// Do not inline remote images.
 	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
 		return src, "online", nil
 	}
-	// already encoded
+	// Data URLs are already encoded.
 	if strings.HasPrefix(s, "data:") {
 		return src, "data", nil
 	}
-	if !filepath.IsAbs(s) && r.ParentPath != "" {
-		s = filepath.Join(r.ParentPath, s)
+	if !filepath.IsAbs(s) && r.parentPath != "" {
+		s = filepath.Join(r.parentPath, s)
 	} else if filepath.IsAbs(s) {
 		s = filepath.Join(".", s)
 	}
@@ -106,100 +67,118 @@ func (r *inlineSvgRenderer) getImage(src []byte) ([]byte, string, error) {
 	return b, "image/svg+xml", nil
 }
 
-// renderImage adds svg embedding function to github.com/yuin/goldmark/renderer/html (MIT).
-func (r *inlineSvgRenderer) renderImage(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+func (r *inlineSVGRenderer) renderImage(
+	writer io.Writer,
+	source []byte,
+	node ast.Node,
+	entering bool,
+	rc renderer.Context,
+) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil
 	}
+
+	w := writer.(util.BufWriter)
 	n := node.(*ast.Image)
-	src, mtype, err := r.getImage(n.Destination)
+	destination := n.Destination.Value(source)
+	svg, mtype, err := r.getImage([]byte(destination))
 
 	if err == nil && mtype == "image/svg+xml" {
-		split := bytes.Split(src, []byte("<svg"))
-		_, _ = w.Write(split[0])
-		_, _ = w.WriteString("<svg")
-		r.applyAttributes(w, n, source, true)
-		_, _ = w.Write(split[1])
-	} else {
-		_, _ = w.WriteString(`<img`)
-		r.writeSource(w, n)
-		r.applyAttributes(w, n, source, false)
-		if r.XHTML {
-			_, _ = w.WriteString(" />")
-		} else {
-			_, _ = w.WriteString(">")
+		before, after, found := bytes.Cut(svg, []byte("<svg"))
+		if found {
+			hw := html.ContextHTMLWriter(rc)
+			_, _ = hw.Write(before)
+			_, _ = w.WriteString("<svg")
+			r.applyAttributes(w, n, source, rc, true)
+			_, _ = hw.Write(after)
+			return ast.WalkSkipChildren, nil
 		}
+	}
+
+	_, _ = w.WriteString(`<img`)
+	r.writeSource(w, n, source, rc)
+	r.applyAttributes(w, n, source, rc, false)
+	if r.config.XHTML {
+		_, _ = w.WriteString(" />")
+	} else {
+		_ = w.WriteByte('>')
 	}
 
 	return ast.WalkSkipChildren, nil
 }
 
-// writeSource writes the src attribute of the image element
-func (r *inlineSvgRenderer) writeSource(w util.BufWriter, n *ast.Image) {
+func (r *inlineSVGRenderer) writeSource(
+	w util.BufWriter,
+	n *ast.Image,
+	source []byte,
+	rc renderer.Context,
+) {
 	_, _ = w.WriteString(` src="`)
-	src := util.URLEscape(n.Destination, true)
-	if r.Unsafe || !html.IsDangerousURL(src) {
-		_, _ = w.Write(util.EscapeHTML(src))
+	src := n.Destination.Value(source)
+	if r.config.Unsafe || !html.IsDangerousURL(src) {
+		_, _ = n.Destination.WriteTo(html.ContextLinkURLWriter(rc), source)
 	}
-	_, _ = w.WriteString(`"`)
+	_ = w.WriteByte('"')
 }
 
-// applyAttributes writes attributes of the image element
-func (r *inlineSvgRenderer) applyAttributes(w util.BufWriter, n *ast.Image, source []byte, exclAlt bool) {
-	if !exclAlt {
+func (r *inlineSVGRenderer) applyAttributes(
+	w util.BufWriter,
+	n *ast.Image,
+	source []byte,
+	rc renderer.Context,
+	excludeAlt bool,
+) {
+	if !excludeAlt {
 		_, _ = w.WriteString(` alt="`)
-		_, _ = w.Write(nodeToHTMLText(n, source))
+		writeNodeText(html.ContextTextWriter(rc), n, source)
 		_ = w.WriteByte('"')
 	}
-	if n.Title != nil {
+	if !n.Title.IsEmpty() {
 		_, _ = w.WriteString(` title="`)
-		r.Writer.Write(w, n.Title)
+		_, _ = n.Title.WriteTo(html.ContextTextWriter(rc), source)
 		_ = w.WriteByte('"')
 	}
 	if n.Attributes() != nil {
-		html.RenderAttributes(w, n, html.ImageAttributeFilter)
+		html.RenderAttributes(w, source, n, html.ImageAttributeFilter, rc)
 	}
 }
 
-// nodeToHTMLText converts ast.Node to HTML text
-func nodeToHTMLText(n ast.Node, source []byte) []byte {
-	var buf bytes.Buffer
-	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-		if s, ok := c.(*ast.String); ok && s.IsCode() {
-			buf.Write(s.Value)
-		} else if !c.HasChildren() {
-			buf.Write(util.EscapeHTML(c.Text(source)))
-		} else {
-			buf.Write(nodeToHTMLText(c, source))
+func writeNodeText(w io.Writer, n ast.Node, source []byte) {
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		switch child := child.(type) {
+		case *ast.Text:
+			_, _ = child.Value.WriteTo(w, source)
+		case *ast.CodeSpan:
+			_, _ = child.Value.WriteTo(w, source)
+		default:
+			writeNodeText(w, child, source)
 		}
 	}
-	return buf.Bytes()
 }
 
-// inlineSvg implements goldmark.Extender
-type inlineSvg struct {
-	options []Option
+type inlineSVGHTMLRendererExtension struct {
+	options []HTMLRendererOption
 }
 
-// InlineSvg is an implementation of goldmark.Extender
-var InlineSvg = &inlineSvg{}
+// NewHTMLRenderer returns an HTML renderer extension that inlines local SVG images.
+func NewHTMLRenderer(opts ...HTMLRendererOption) html.Extension {
+	return &inlineSVGHTMLRendererExtension{options: opts}
+}
 
-// New returns a new InlineSvg extension.
-func New(opts ...Option) goldmark.Extender {
-	return &inlineSvg{
-		options: opts,
+func (e *inlineSVGHTMLRendererExtension) RendererOptions(config *html.Config) []html.Option {
+	cfg := htmlRendererConfig{}
+	for _, option := range e.options {
+		option(&cfg)
+	}
+
+	r := &inlineSVGRenderer{
+		config:     config,
+		parentPath: cfg.parentPath,
+	}
+	return []html.Option{
+		html.WithNodeRenderer(ast.KindImage, html.NodeRendererFunc(r.renderImage)),
 	}
 }
 
-func (e *inlineSvg) Extend(m goldmark.Markdown) {
-	ropts := []rendererOption{}
-	for _, opt := range e.options {
-		if ropt, ok := opt.(rendererOption); ok {
-			ropts = append(ropts, ropt)
-		}
-	}
-
-	m.Renderer().AddOptions(renderer.WithNodeRenderers(
-		util.Prioritized(NewInlineSvgRenderer(ropts...), 501),
-	))
-}
+// HTMLRenderer is the default HTML renderer extension.
+var HTMLRenderer = NewHTMLRenderer()

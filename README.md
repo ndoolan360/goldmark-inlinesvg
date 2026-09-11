@@ -5,7 +5,7 @@ A small [goldmark](https://github.com/yuin/goldmark) extension that **inlines lo
 ## Install
 
 ```sh
-go get go.doolan.dev/goldmark/inlinesvg
+go get go.doolan.dev/goldmark/inlinesvg/v2
 ```
 
 ## Behavior
@@ -38,34 +38,45 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/yuin/goldmark"
-	"go.doolan.dev/goldmark/inlinesvg"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
+	"go.doolan.dev/goldmark/inlinesvg/v2"
 )
 
 func main() {
-	md := goldmark.New(
-		goldmark.WithExtensions(
-			inlinesvg.InlineSvg,
-		),
+	source := []byte(`![alt text](./logo.svg "title")`)
+	doc := parser.New().Parse(source)
+	renderer := html.New(
+		html.WithExtensions(inlinesvg.HTMLRenderer),
 	)
 
 	var buf bytes.Buffer
-	_ = md.Convert([]byte(`![alt text](./logo.svg "title")`), &buf)
+	_ = renderer.Render(&buf, source, doc)
 
 	fmt.Println(buf.String())
-	
+
 	// Output:
-  // <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg" title="title">
-  //  <path d="M10 10 H 90 V 90 H 10 Z"/>
-  // </svg>
+	// <p><svg width="100" height="100" xmlns="http://www.w3.org/2000/svg" title="title">
+	//  <path d="M10 10 H 90 V 90 H 10 Z"/>
+	// </svg></p>
 }
+```
+
+To resolve relative image paths from a specific directory, construct a configured renderer extension:
+
+```go
+renderer := html.New(
+	html.WithExtensions(
+		inlinesvg.NewHTMLRenderer(inlinesvg.WithParentPath("./assets")),
+	),
+)
 ```
 
 ## Security
 
 The extension respects Goldmark’s safety behavior:
 - Dangerous URLs (for example, `javascript:` and SVG data URLs) are **stripped** unless you enable `html.WithUnsafe()` on the renderer.
-- URL safety is checked after entity resolution and URL escaping so encoded dangerous schemes are also stripped.
+- URL safety is checked after Markdown entity decoding, so entity-encoded dangerous schemes are also stripped.
 
 ## License
 
